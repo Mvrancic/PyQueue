@@ -1,5 +1,5 @@
 from fastapi.testclient import TestClient
-from src.pyqueue.main import app
+from pyqueue.main import app
 
 client = TestClient(app)
 

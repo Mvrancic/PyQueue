@@ -1,7 +1,7 @@
 import time
 import logging
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timezone
 from pyqueue.infra.db.session import SessionLocal
 from pyqueue.infra.queue.redis_queue import queue_client
 from pyqueue.domain.models import JobStatus
@@ -25,7 +25,7 @@ def process_job(db: Session, job_id: str):
 
     # Update state to RUNNING
     job.status = JobStatus.RUNNING.value
-    job.started_at = datetime.utcnow()
+    job.started_at = datetime.now(timezone.utc)
     db.commit()
 
     handler = get_handler(job.type)
@@ -33,7 +33,7 @@ def process_job(db: Session, job_id: str):
         logger.error(f"No handler for job type {job.type}")
         job.status = JobStatus.FAILED.value
         job.error = f"No handler for type {job.type}"
-        job.finished_at = datetime.utcnow()
+        job.finished_at = datetime.now(timezone.utc)
         db.commit()
         return
 
@@ -56,7 +56,7 @@ def process_job(db: Session, job_id: str):
             
         job.status = JobStatus.FAILED.value
     finally:
-        job.finished_at = datetime.utcnow()
+        job.finished_at = datetime.now(timezone.utc)
         db.commit()
         logger.info(f"Job {job_id} finished with status {job.status}")
 

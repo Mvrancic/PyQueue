@@ -1,104 +1,104 @@
 # PyQueue
 
-**Un sistema de colas de tareas y procesamiento de jobs, liviano y autoalojado**, construido con FastAPI, Redis y PostgreSQL.
+**A lightweight, self-hosted task queue & job processing system**, built with FastAPI, Redis, and PostgreSQL.
 
-PyQueue permite encolar jobs en background a través de una API REST, procesarlos de forma asíncrona con un worker desacoplado, y hacer seguimiento de su estado, resultados y errores — con reintentos automáticos incluidos.
+PyQueue lets you enqueue background jobs over a REST API, process them asynchronously with a decoupled worker, and track their status, results, and failures — with automatic retries built in.
 
-## Funcionalidades
+## Features
 
-- **API de gestión de jobs** — crear, consultar, listar, cancelar y reintentar jobs vía REST.
-- **Procesamiento asíncrono en background** — un worker independiente consume jobs de una cola en Redis, desacoplado del proceso de la API.
-- **Persistencia** — el estado, payload, resultados y errores de cada job se guardan en PostgreSQL.
-- **Reintentos automáticos** — los jobs fallidos se vuelven a encolar hasta un `max_retries` configurable, con el conteo de reintentos registrado por job.
-- **Tipos de job extensibles** — los handlers se registran en un task registry, así que agregar un nuevo tipo de job es escribir una función.
-- **Dockerizado** — API, worker, PostgreSQL y Redis levantan todos con un solo `docker-compose up`.
+- **Job Management API** — create, retrieve, list, cancel, and retry jobs over REST.
+- **Async Background Processing** — a standalone worker consumes jobs from a Redis queue, independent of the API process.
+- **Persistence** — job state, payload, results, and errors are stored in PostgreSQL.
+- **Automatic Retries** — failed jobs are re-queued up to a configurable `max_retries`, with retry count tracked per job.
+- **Pluggable Job Types** — handlers are registered in a task registry, so adding a new job type is a matter of writing one function.
+- **Dockerized** — API, worker, PostgreSQL, and Redis all run via a single `docker-compose up`.
 
-## Arquitectura
+## Architecture
 
 ```
         POST /jobs                 BRPOP
-Cliente ────────────► API ──────► Redis ──────► Worker ──────► Handler
-                        │ (FastAPI)  (cola)                (sleep/csv_stats/...)
-                        │
-                        ▼
+Client ────────────► API ──────► Redis ──────► Worker ──────► Handler
+                       │  (FastAPI)  (queue)              (sleep/csv_stats/...)
+                       │
+                       ▼
                   PostgreSQL
-              (estado y resultados)
+              (job state & results)
 ```
 
-| Componente | Responsabilidad                                                          |
-|------------|----------------------------------------------------------------------------|
-| API        | App FastAPI que recibe solicitudes de jobs y expone endpoints de estado    |
-| Redis      | Cola liviana que transporta IDs de jobs entre la API y el worker           |
-| Worker     | Proceso de larga duración que desencola jobs (`BRPOP`) y los ejecuta       |
-| PostgreSQL | Fuente de verdad del estado, payloads, resultados y errores de cada job    |
+| Component  | Responsibility                                                        |
+|------------|------------------------------------------------------------------------|
+| API        | FastAPI app that accepts job requests and exposes job status endpoints |
+| Redis      | Lightweight queue buffering job IDs between API and worker             |
+| Worker     | Long-running process that dequeues jobs (`BRPOP`) and executes them    |
+| PostgreSQL | Source of truth for job state, payloads, results, and errors           |
 
-## Stack Tecnológico
+## Tech Stack
 
 Python 3.11 · FastAPI · SQLAlchemy · Alembic · Redis · PostgreSQL · Docker Compose · Pytest
 
-## Decisiones técnicas y limitaciones conocidas
+## Technical Decisions and Known Limitations
 
-**Redis como buffer, PostgreSQL como fuente de verdad.** La cola solo transporta
-job IDs; todo el estado vive en Postgres. Esto permite reconstruir el estado del
-sistema aunque se pierda Redis, a costa de una consulta extra por job.
+**Redis as buffer, PostgreSQL as source of truth.** The queue only carries job
+IDs; all state lives in Postgres. This lets the system rebuild its state even
+if Redis is lost, at the cost of one extra query per job.
 
-**Semántica at-most-once (limitación conocida).** El worker hace `BRPOP` y luego
-actualiza el estado en la base. Si el proceso cae entre esas dos operaciones, el
-job se pierde: no hay ack ni visibility timeout. Para at-least-once haría falta
-una cola intermedia de "in-flight" (patrón `BRPOPLPUSH`) con un reaper que
-devuelva los jobs huérfanos.
+**At-most-once semantics (known limitation).** The worker does `BRPOP` and then
+updates state in the database. If the process crashes between those two
+operations, the job is lost — there is no ack or visibility timeout.
+Achieving at-least-once delivery would require an intermediate "in-flight"
+queue (the `BRPOPLPUSH` pattern) with a reaper that returns orphaned jobs.
 
-**Cancelación cooperativa.** Cancelar un job en estado RUNNING marca la base pero
-no interrumpe el handler en curso. Interrumpirlo requeriría que los handlers
-chequeen periódicamente una señal de cancelación.
+**Cooperative cancellation.** Canceling a RUNNING job marks it in the database
+but does not interrupt the handler already in progress. Interrupting it would
+require handlers to periodically check a cancellation signal.
 
-**Sin prioridades ni scheduling.** Una sola cola FIFO. Prioridades exigirían
-múltiples listas de Redis; jobs diferidos, un sorted set por timestamp.
+**No priorities or scheduling.** A single FIFO queue. Priorities would require
+multiple Redis lists; deferred jobs would need a sorted set keyed by timestamp.
 
-## Cómo empezar
+## Getting Started
 
-### Requisitos previos
+### Prerequisites
 
 - Docker & Docker Compose
 
-### Levantar el sistema
+### Run it
 
-1. Copiá el archivo de entorno de ejemplo y ajustalo si hace falta:
+1. Copy the environment template and adjust if needed:
    ```bash
    cp .env.example .env
    ```
 
-2. Levantá todo (API, worker, PostgreSQL, Redis):
+2. Start everything (API, worker, PostgreSQL, Redis):
    ```bash
    docker-compose up --build
    ```
 
-3. Explorá la API:
-   - URL base: `http://localhost:8000/api/v1`
-   - Documentación interactiva (Swagger UI): `http://localhost:8000/docs`
+3. Explore the API:
+   - Base URL: `http://localhost:8000/api/v1`
+   - Interactive docs (Swagger UI): `http://localhost:8000/docs`
 
-### Referencia de la API
+### API Reference
 
-| Método | Endpoint                       | Descripción                              |
-|--------|---------------------------------|--------------------------------------------|
-| POST   | `/api/v1/jobs`                  | Crea y encola un nuevo job                 |
-| GET    | `/api/v1/jobs`                  | Lista jobs (filtrable por `status`)        |
-| GET    | `/api/v1/jobs/{job_id}`         | Obtiene un job puntual                     |
-| POST   | `/api/v1/jobs/{job_id}/cancel`  | Cancela un job en cola o en ejecución      |
-| POST   | `/api/v1/jobs/{job_id}/retry`   | Vuelve a encolar un job fallido o cancelado|
-| GET    | `/health`                       | Chequeo de disponibilidad                  |
+| Method | Endpoint                  | Description                       |
+|--------|----------------------------|------------------------------------|
+| POST   | `/api/v1/jobs`             | Create and enqueue a new job       |
+| GET    | `/api/v1/jobs`             | List jobs (filter by `status`)     |
+| GET    | `/api/v1/jobs/{job_id}`    | Fetch a single job                 |
+| POST   | `/api/v1/jobs/{job_id}/cancel` | Cancel a queued or running job |
+| POST   | `/api/v1/jobs/{job_id}/retry`  | Re-queue a failed or canceled job |
+| GET    | `/health`                  | Liveness check                     |
 
-### Tipos de job
+### Job Types
 
-| Tipo        | Payload                    | Descripción                                              |
-|-------------|-----------------------------|-------------------------------------------------------------|
-| `sleep`     | `{ "seconds": 3 }`          | Simula una tarea lenta durmiendo N segundos                 |
-| `csv_stats` | `{ "csv_text": "..." }`     | Parsea texto CSV y devuelve estadísticas de filas/columnas  |
-| `fail`      | `{}`                        | Siempre falla — útil para probar el pipeline de reintentos  |
+| Type        | Payload                    | Description                                          |
+|-------------|-----------------------------|-------------------------------------------------------|
+| `sleep`     | `{ "seconds": 3 }`          | Simulates a slow task by sleeping for N seconds       |
+| `csv_stats` | `{ "csv_text": "..." }`     | Parses CSV text and returns row/column stats          |
+| `fail`      | `{}`                        | Always fails — useful for testing the retry pipeline  |
 
-### Ejemplos de uso
+### Usage Examples
 
-**Crear un job:**
+**Create a job:**
 ```bash
 curl -X POST "http://localhost:8000/api/v1/jobs" \
   -H "Content-Type: application/json" \
@@ -109,56 +109,57 @@ curl -X POST "http://localhost:8000/api/v1/jobs" \
   }'
 ```
 
-**Consultar estado** (reemplazá `JOB_ID` con el id devuelto arriba):
+**Check status** (replace `JOB_ID` with the id returned above):
 ```bash
 curl "http://localhost:8000/api/v1/jobs/JOB_ID"
 ```
 
-**Cancelar un job:**
+**Cancel a job:**
 ```bash
 curl -X POST "http://localhost:8000/api/v1/jobs/JOB_ID/cancel"
 ```
 
-**Reintentar un job fallido:**
+**Retry a failed job:**
 ```bash
 curl -X POST "http://localhost:8000/api/v1/jobs/JOB_ID/retry"
 ```
 
-## Estructura del proyecto
+## Project Structure
 
 ```
 src/pyqueue/
-├── api/                # Rutas de FastAPI, schemas de request/response
-├── domain/              # Enums centrales (JobStatus, JobType)
+├── api/                # FastAPI routes, request/response schemas
+├── domain/              # Core enums (JobStatus, JobType)
 ├── infra/
-│   ├── db/              # Modelos SQLAlchemy, sesión, migraciones Alembic
-│   └── queue/            # Cliente de la cola en Redis
-├── services/            # Lógica de negocio (JobService, task registry)
-├── workers/              # Entry point del worker + handlers de jobs
-├── config.py             # Configuración basada en variables de entorno
-└── main.py                # Entry point de la app FastAPI
+│   ├── db/              # SQLAlchemy models, session, Alembic migrations
+│   └── queue/            # Redis queue client
+├── services/            # Business logic (JobService, task registry)
+├── workers/              # Worker entrypoint + job handlers
+├── config.py             # Environment-based settings
+└── main.py                # FastAPI app entrypoint
 ```
 
-## Desarrollo
+## Development
 
-Correr el test suite localmente sin Docker:
+Run the test suite locally without Docker:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[test]"
-PYTHONPATH=. pytest tests/
+cp .env.example .env   # required: Settings() reads DATABASE_URL/REDIS_URL at import time
+pytest tests/
 ```
 
-### Migraciones de base de datos
+### Database Migrations
 
-Las migraciones se manejan con Alembic:
+Migrations are managed with Alembic:
 
 ```bash
-alembic upgrade head        # aplica migraciones
-alembic revision --autogenerate -m "mensaje"   # crea una nueva migración
+alembic upgrade head        # apply migrations
+alembic revision --autogenerate -m "message"   # create a new migration
 ```
 
-## Licencia
+## License
 
-Este proyecto se provee tal cual, con fines educativos y de portfolio.
+This project is provided as-is for educational and portfolio purposes.

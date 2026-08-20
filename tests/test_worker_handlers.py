@@ -1,6 +1,6 @@
 import pytest
-from src.pyqueue.workers.handlers.csv_stats import handle_csv_stats
-from src.pyqueue.workers.handlers.sleep import handle_sleep
+from pyqueue.workers.handlers.csv_stats import handle_csv_stats
+from pyqueue.workers.handlers.sleep import handle_sleep
 
 def test_handle_csv_stats_success():
     payload = {"csv_text": "id,name\n1,alice\n2,bob\n"}

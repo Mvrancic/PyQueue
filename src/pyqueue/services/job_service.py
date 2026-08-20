@@ -1,5 +1,5 @@
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from sqlalchemy.orm import Session
 from pyqueue.domain.models import JobStatus
@@ -45,8 +45,8 @@ class JobService:
         # Only cancel if queued or running
         if job.status in [JobStatus.QUEUED.value, JobStatus.RUNNING.value]:
             job.status = JobStatus.CANCELED.value
-            job.canceled_at = datetime.utcnow()
-            job.finished_at = datetime.utcnow() # Technically finished if canceled (simple model)
+            job.canceled_at = datetime.now(timezone.utc)
+            job.finished_at = datetime.now(timezone.utc) # Technically finished if canceled (simple model)
             self.db.commit()
             self.db.refresh(job)
         return job
@@ -60,14 +60,15 @@ class JobService:
         if job.status not in [JobStatus.FAILED.value, JobStatus.CANCELED.value]:
             return job # Or raise error? For now, idempotent return
 
-        # Reset state to queued
+        # Reset state to queued. retry_count is bumped by process_job() when
+        # the retried execution actually fails, not here, to avoid double
+        # counting the same retry.
         job.status = JobStatus.QUEUED.value
         job.result = None
         job.error = None
         job.started_at = None
         job.finished_at = None
-        job.retry_count += 1
-        
+
         self.db.commit()
         self.db.refresh(job)
         
